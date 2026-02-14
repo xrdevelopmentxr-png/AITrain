@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+  <meta charset="UTF-8">
+  <title>Pro AI Trener</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils"></script>
+  
+  <style>
+    body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; text-align: center; margin: 0; padding: 20px; }
+    
+    /* Kontrollpanel */
+    .controls { margin-bottom: 20px; }
+    button {
+      padding: 10px 20px; font-size: 18px; cursor: pointer; border: none; border-radius: 5px; margin: 0 10px;
+      transition: background 0.3s;
+    }
+    .btn-active { background-color: #00e676; color: black; font-weight: bold; }
+    .btn-inactive { background-color: #333; color: white; }
+
+    /* Video Container */
+    .container { position: relative; width: 800px; max-width: 100%; margin: auto; border: 3px solid #333; border-radius: 10px; overflow: hidden; }
+    #webcam { width: 100%; height: auto; display: block; transform: scaleX(-1); } /* Speilvendt */
+    #output_canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transform: scaleX(-1); }
+
+    /* Info boks */
+    .info-panel {
+      position: absolute; top: 10px; right: 10px; 
+      background: rgba(0, 0, 0, 0.7); padding: 15px; border-radius: 8px; text-align: left;
+    }
+    .count-box { font-size: 40px; color: #00e676; font-weight: bold; }
+    .label { font-size: 14px; color: #aaa; }
+    .feedback { font-size: 18px; margin-top: 5px; color: #fff; }
+  </style>
+</head>
+<body>
+
+  <h1>🏋️ AI Personlig Trener</h1>
+
+  <div class="controls">
+    <button id="btnSquat" class="btn-active" onclick="setMode('squat')">Knebøy (Squat)</button>
+    <button id="btnPushup" class="btn-inactive" onclick="setMode('pushup')">Armheving (Pushup)</button>
+  </div>
+
+  <div class="container">
+    <video id="webcam" playsinline></video>
+    <canvas id="output_canvas"></canvas>
+    
+    <div class="info-panel">
+      <div class="label">REPETISJONER</div>
+      <div class="count-box" id="count">0</div>
+      <div class="label">STATUS</div>
+      <div class="feedback" id="stage">Stå klar...</div>
+    </div>
+  </div>
+
+  <script>
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('output_canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    
+    let currentMode = 'squat'; // Start modus
+    let count = 0;
+    let stage = 'UP'; // 'UP' eller 'DOWN'
+    let angle = 0;
+
+    // Bytt øvelse funksjon
+    function setMode(mode) {
+      currentMode = mode;
+      count = 0; // Nullstill teller
+      stage = 'UP';
+      document.getElementById('count').innerText = count;
+      document.getElementById('stage').innerText = "Klar!";
+      
+      // Oppdater knappe-design
+      if(mode === 'squat') {
+        document.getElementById('btnSquat').className = 'btn-active';
+        document.getElementById('btnPushup').className = 'btn-inactive';
+      } else {
+        document.getElementById('btnSquat').className = 'btn-inactive';
+        document.getElementById('btnPushup').className = 'btn-active';
+      }
+    }
+
+    // Matematikk: Beregn vinkel mellom tre punkter (A, B, C)
+    function calculateAngle(a, b, c) {
+      let radians = Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(a.y - b.y, a.x - b.x);
+      let angle = Math.abs(radians * 180.0 / Math.PI);
+      if (angle > 180.0) angle = 360 - angle;
+      return angle;
+    }
+
+    function onResults(results) {
+      if (!results.poseLandmarks) return;
+
+      // Tilpass canvas størrelse til video
+      canvasElement.width = videoElement.videoWidth;
+      canvasElement.height = videoElement.videoHeight;
+
+      canvasCtx.save();
+      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+
+      // 1. Tegn skjelettet
+      // Vi endrer farge basert på om øvelsen gjøres riktig (Grønn hvis 'DOWN', Hvit hvis 'UP')
+      let lineColor = stage === 'DOWN' ? '#00e676' : '#ffffff';
+      
+      drawConnectors(canvasCtx, results.poseLandmarks, POSE_CONNECTIONS, {color: lineColor, lineWidth: 4});
+      drawLandmarks(canvasCtx, results.poseLandmarks, {color: '#ff5252', lineWidth: 2});
+
+      // 2. Hent koordinater
+      const landmarks = results.poseLandmarks;
+      
+      // MediaPipe Indekser:
+      // 11=Venstre Skulder, 13=Venstre Albue, 15=Venstre Håndledd
+      // 23=Venstre Hofte, 25=Venstre Kne, 27=Venstre Ankel
+      
+      let p1, p2, p3; // De tre punktene vi måler
+
+      if (currentMode === 'squat') {
+        // Knebøy: Hofte -> Kne -> Ankel
+        p1 = landmarks[23];
+        p2 = landmarks[25];
+        p3 = landmarks[27];
+      } else {
+        // Armheving: Skulder -> Albue -> Håndledd
+        p1 = landmarks[11];
+        p2 = landmarks[13];
+        p3 = landmarks[15];
+      }
+
+      // 3. Beregn vinkelen hvis vi ser punktene
+      if (p1 && p2 && p3) {
+        angle = calculateAngle(p1, p2, p3);
+
+        // --- LOGIKK FOR TELLING ---
+        if (currentMode === 'squat') {
+          // Knebøy logikk
+          if (angle > 160) {
+            stage = "UP";
+          }
+          if (angle < 90 && stage === "UP") { // 90 grader eller dypere
+            stage = "DOWN";
+            count++;
+            document.getElementById('count').innerText = count;
+          }
+        } else {
+          // Armheving logikk
+          if (angle > 160) {
+            stage = "UP";
+          }
+          if (angle < 90 && stage === "UP") { // Nesa i gulvet-ish
+            stage = "DOWN";
+            count++;
+            document.getElementById('count').innerText = count;
+          }
+        }
+        
+        document.getElementById('stage').innerText = stage === "DOWN" ? "Hold den..." : "Gå ned";
+      }
+
+      canvasCtx.restore();
+    }
+
+    const pose = new Pose({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`});
+    pose.setOptions({
+      modelComplexity: 1,
+      smoothLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
+    pose.onResults(onResults);
+
+    const camera = new Camera(videoElement, {
+      onFrame: async () => { await pose.send({image: videoElement}); },
+      width: 1280,
+      height: 720
+    });
+    camera.start();
+  </script>
+</body>
+</html>
